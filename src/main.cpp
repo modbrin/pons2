@@ -22,6 +22,7 @@
 #include <cstring>
 #include <vector>
 #include <string>
+#include <optional>
 
 #include "helpers.hpp"
 
@@ -117,6 +118,32 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityF
     return VK_FALSE;
 }
 
+struct QueueFamilyIndices {
+    std::optional<uint32_t> graphicsFamily;
+
+    bool isComplete() {
+        return graphicsFamily.has_value();
+    }
+};
+
+QueueFamilyIndices findQueueFamilies(vk::PhysicalDevice device) {
+    QueueFamilyIndices indices;
+    
+    std::vector<vk::QueueFamilyProperties> queueFamilies = device.getQueueFamilyProperties();
+    int i = 0;
+    for (const auto& queueFamily : queueFamilies) {
+        if (queueFamily.queueFlags & vk::QueueFlagBits::eGraphics) {
+            indices.graphicsFamily = i;
+        }
+        if (indices.isComplete()) {
+            break;
+        }
+        ++i;
+    }
+
+    return indices;
+}
+
 class HelloTriangleApplication {
 public:
     void run() {
@@ -167,6 +194,8 @@ private:
             return false;
         }
         setupDebugMessenger();
+        pickPhysicalDevice();
+        createLogicalDevice();
 
 
         return true;
@@ -280,9 +309,65 @@ private:
         instance = vk::createInstanceUnique(createInfo);
 
         loadDebugUtilsCommands(instance.get());
-        
 
         return true;
+    }
+
+    bool isDeviceSuitable(vk::PhysicalDevice device) {
+        vk::PhysicalDeviceProperties deviceProperties = device.getProperties();
+        vk::PhysicalDeviceFeatures deviceFeatures = device.getFeatures();
+        QueueFamilyIndices indices = findQueueFamilies(device);
+
+        return deviceProperties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu &&
+            deviceFeatures.geometryShader && indices.isComplete();
+    }
+
+    void pickPhysicalDevice() {
+        physicalDevice = VK_NULL_HANDLE;
+        std::vector<vk::PhysicalDevice> physicalDevices = instance->enumeratePhysicalDevices();
+        if (physicalDevices.empty()) {
+            throw std::runtime_error("failed to find GPUs with Vulkan support!");
+        }
+        for (const auto& device : physicalDevices) {
+            if (isDeviceSuitable(device)) {
+                physicalDevice = device;
+                break;
+            }
+        }
+        if (!physicalDevice) {
+            throw std::runtime_error("failed to find a suitable GPU!");
+        }
+
+    }
+
+    void createLogicalDevice() {
+        QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+
+        vk::DeviceQueueCreateInfo queueCreateInfo{};
+        queueCreateInfo.sType = vk::StructureType::eDeviceQueueCreateInfo;
+        queueCreateInfo.queueFamilyIndex = indices.graphicsFamily.value();
+        queueCreateInfo.queueCount = 1;
+        float queuePriority = 1.0f;
+        queueCreateInfo.pQueuePriorities = &queuePriority;
+
+        vk::PhysicalDeviceFeatures deviceFeatures{};
+
+        vk::DeviceCreateInfo createInfo{};
+        createInfo.sType = vk::StructureType::eDeviceCreateInfo;
+        createInfo.pQueueCreateInfos = &queueCreateInfo;
+        createInfo.queueCreateInfoCount = 1;
+        createInfo.pEnabledFeatures = &deviceFeatures;
+        createInfo.enabledExtensionCount = 0;
+
+        if (gEnableValidationLayers) {
+            createInfo.enabledLayerCount = static_cast<uint32_t>(gValidationLayers.size());
+            createInfo.ppEnabledLayerNames = gValidationLayers.data();
+        } else {
+            createInfo.enabledLayerCount = 0;
+        }
+
+        device = physicalDevice.createDeviceUnique(createInfo);
+        graphicsQueue = device->getQueue(indices.graphicsFamily.value(), 0);
     }
 
     void mainLoop() {
@@ -313,6 +398,9 @@ private:
     vk::UniqueHandle<vk::Instance, vk::DispatchLoaderStatic> instance;
     // std::vector<std::string> sdlVulkanExtensions;
     vk::DebugUtilsMessengerEXT debugMessenger;
+    vk::PhysicalDevice physicalDevice;
+    vk::UniqueHandle<vk::Device, vk::DispatchLoaderStatic> device;
+    vk::Queue graphicsQueue;
 };
 
 int main() {
