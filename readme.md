@@ -5,14 +5,14 @@ Second step towards my rendering engine.
 
 Timeline:
 ```
-V1 OpenGl 101 -> V2 Vulkan 101 -> V3 Mini Game Engine -> ???
+V1 OpenGl 101 -> V2 Vulkan 101 -> V3 Small demo game -> ???
                        ^
                    This repo
 ```
 
 ## Short Description
 * Based on vulkan-tutorial.com
-* uses vulkan-hpp and sdl
+* uses vulkan-hpp and sdl2
 * ...
 
 ## Dependencies
@@ -23,9 +23,26 @@ V1 OpenGl 101 -> V2 Vulkan 101 -> V3 Mini Game Engine -> ???
 * assimp
 * freetype
 
+### Example of packages needed for Arch linux
+```sh
+llvm
+clang
+lldb
+lldb-mi-git
+ninja
+cmake
+amdvlk
+vulkan-validation-layers
+vulkan-extra-layers
+vulkan-extra-tools
+vulkan-html-docs
+vulkan-tools
+tl-expected
+```
+
 ## Troubleshooting
-To use vscode-cmake-tools on archlinux-based systems, create user-local kit for proper compiler selection. (vscode cmake extension doesn't support format of compiler paths on arch)
-[link](https://github.com/microsoft/vscode-cmake-tools/blob/main/docs/kits.md#user-local-kits)
+To use vscode-cmake-tools on archlinux-based systems, create user-local kit for proper compiler selection. Problem is likely not present on other distros. (vscode cmake extension doesn't support format of compiler paths on arch)
+[doc link](https://github.com/microsoft/vscode-cmake-tools/blob/main/docs/kits.md#user-local-kits)
 
 example:
 ```
