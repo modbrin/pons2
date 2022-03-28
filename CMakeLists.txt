@@ -8,8 +8,6 @@ else()
     add_compile_options(-Wall -Wextra -pedantic -Wno-unknown-pragmas -Wconversion -Wsign-conversion)
 endif()
 
-# include_directories(libs/glad/include)
-
 find_package(Vulkan REQUIRED FATAL_ERROR)
 
 find_package(SDL2 CONFIG REQUIRED)

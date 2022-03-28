@@ -42,7 +42,8 @@ tl-expected
 
 ## Troubleshooting
 To use vscode-cmake-tools on archlinux-based systems, create user-local kit for proper compiler selection. Problem is likely not present on other distros. (vscode cmake extension doesn't support format of compiler paths on arch)
-[doc link](https://github.com/microsoft/vscode-cmake-tools/blob/main/docs/kits.md#user-local-kits)
+
+[docs link](https://github.com/microsoft/vscode-cmake-tools/blob/main/docs/kits.md#user-local-kits)
 
 example:
 ```

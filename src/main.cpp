@@ -18,12 +18,14 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
 
 #include "helpers.hpp"
 
@@ -56,19 +58,22 @@ void loadDebugUtilsCommands(VkInstance instance) {
     PFN_vkVoidFunction temp_fp;
 
     temp_fp = vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
-    if (!temp_fp)
+    if (!temp_fp) {
         throw "Failed to load vkCreateDebugUtilsMessengerEXT"; // check shouldn't be necessary (based on spec)
+    }
     CreateDebugUtilsMessengerEXTDispatchTable[instance] = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(temp_fp);
 
     temp_fp = vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
-    if (!temp_fp)
+    if (!temp_fp) {
         throw "Failed to load vkDestroyDebugUtilsMessengerEXT"; // check shouldn't be necessary (based on spec)
+    }
     DestroyDebugUtilsMessengerEXTDispatchTable[instance] =
         reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(temp_fp);
 
     temp_fp = vkGetInstanceProcAddr(instance, "vkSubmitDebugUtilsMessageEXT");
-    if (!temp_fp)
+    if (!temp_fp) {
         throw "Failed to load vkSubmitDebugUtilsMessageEXT"; // check shouldn't be necessary (based on spec)
+    }
     SubmitDebugUtilsMessageEXTDispatchTable[instance] = reinterpret_cast<PFN_vkSubmitDebugUtilsMessageEXT>(temp_fp);
 }
 
@@ -133,9 +138,7 @@ public:
         if (!initWindow()) {
             throw std::runtime_error("Failed to init window");
         }
-        if (!initVulkan()) {
-            throw std::runtime_error("Failed to init vulkan");
-        }
+        initVulkan();
         mainLoop();
         cleanup();
     }
@@ -166,15 +169,14 @@ private:
         return true;
     }
     bool initVulkan() {
-        if (!createInstance()) {
-            return false;
-        }
+        createInstance();
         setupDebugMessenger();
         createSurface();
         pickPhysicalDevice();
         createLogicalDevice();
         createSwapChain();
         createImageViews();
+        createGraphicsPipeline();
 
         return true;
     }
@@ -250,7 +252,7 @@ private:
         return sdlExtensionNames;
     }
 
-    bool createInstance() {
+    void createInstance() {
         if (gEnableValidationLayers && !checkValidationLayerSupport()) {
             throw std::runtime_error("validation layers requested, but not available!");
         }
@@ -284,8 +286,6 @@ private:
         instance = vk::createInstanceUnique(createInfo);
 
         loadDebugUtilsCommands(instance.get());
-
-        return true;
     }
 
     vk::Bool32 presentSupport = false;
@@ -508,12 +508,46 @@ private:
         swapChainImageViews.reserve(swapChainImages.size());
         for (auto image : swapChainImages) {
             vk::ImageViewCreateInfo imageViewCreateInfo(
-                vk::ImageViewCreateFlags(), image, vk::ImageViewType::e2D, swapChainImageFormat,
+                vk::ImageViewCreateFlags{}, image, vk::ImageViewType::e2D, swapChainImageFormat,
                 vk::ComponentMapping{vk::ComponentSwizzle::eR, vk::ComponentSwizzle::eG, vk::ComponentSwizzle::eB,
                                      vk::ComponentSwizzle::eA},
                 vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
             swapChainImageViews.push_back(device->createImageViewUnique(imageViewCreateInfo));
         }
+    }
+
+    void createGraphicsPipeline() {
+        std::vector<char> vertShaderCode = readFile("shaders/vert.spv");
+        std::vector<char> fragShaderCode = readFile("shaders/frag.spv");
+        vk::UniqueShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+        vk::UniqueShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+        vk::PipelineShaderStageCreateInfo vertShaderStageInfo{
+            vk::PipelineShaderStageCreateFlags{}, vk::ShaderStageFlagBits::eVertex, vertShaderModule.get(), "main"};
+        vk::PipelineShaderStageCreateInfo fragShaderStageInfo{
+            vk::PipelineShaderStageCreateFlags{}, vk::ShaderStageFlagBits::eFragment, fragShaderModule.get(), "main"};
+        vk::PipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+    }
+
+    vk::UniqueShaderModule createShaderModule(const std::vector<char> &code) {
+        vk::ShaderModuleCreateInfo createInfo{vk::ShaderModuleCreateFlags{}, code.size(),
+                                              reinterpret_cast<const uint32_t *>(code.data())};
+        vk::UniqueShaderModule shaderModule = device->createShaderModuleUnique(createInfo);
+        return shaderModule;
+    }
+
+    static std::vector<char> readFile(const std::string &filename) {
+        std::ifstream file(filename, std::ios::ate | std::ios::binary);
+        if (!file.is_open()) {
+            throw std::runtime_error("failed to open file!");
+        }
+        size_t fileSize = static_cast<size_t>(file.tellg());
+        std::vector<char> buffer(fileSize);
+        file.seekg(0);
+        file.read(buffer.data(), static_cast<std::streamsize>(fileSize));
+        file.close();
+
+        return buffer;
     }
 
     void mainLoop() {
