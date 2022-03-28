@@ -8,9 +8,6 @@ else()
     add_compile_options(-Wall -Wextra -pedantic -Wno-unknown-pragmas -Wconversion -Wsign-conversion)
 endif()
 
-# add_library(glad libs/glad/include/glad/glad.h
-#                  libs/glad/include/KHR/khrplatform.h
-#                  libs/glad/src/glad.c)
 # include_directories(libs/glad/include)
 
 find_package(Vulkan REQUIRED FATAL_ERROR)
@@ -23,7 +20,6 @@ find_package(tl-expected CONFIG REQUIRED)
 add_executable(pons2 src/helpers.hpp src/main.cpp)
 
 target_link_libraries(pons2 PRIVATE Vulkan::Vulkan SDL2)
-# target_link_libraries(pons2 PRIVATE glad)
 # target_link_libraries(pons2 PRIVATE freetype)
 
 if(WIN32)
