@@ -27,7 +27,6 @@
 #include <unordered_map>
 #include <vector>
 
-
 #include "helpers.hpp"
 
 // CONSTANTS
@@ -141,8 +140,9 @@ public:
         }
         initVulkan();
         mainLoop();
-        cleanup();
     }
+
+    ~HelloTriangleApplication() { SDL_DestroyWindow(window); }
 
 private:
     bool initWindow() {
@@ -180,9 +180,9 @@ private:
         createRenderPass();
         createGraphicsPipeline();
         createFramebuffers();
+        createSyncObjects();
         createCommandPool();
         createCommandBuffer();
-        createSyncObjects();
 
         return true;
     }
@@ -639,11 +639,19 @@ private:
             /*pInputAttachments*/ nullptr,
             /*colorAttachmentCount*/ 1,    &colorAttachmentRef,
         };
-        vk::RenderPassCreateInfo renderPassInfo{
-            vk::RenderPassCreateFlags{},
-            /*attachmentCount*/ 1,       &colorAttachment,
-            /*subpassCount*/ 1,          &subpass,
+        vk::SubpassDependency dependency{
+            VK_SUBPASS_EXTERNAL,
+            /*dstSubpass*/ 0,
+            vk::PipelineStageFlagBits::eColorAttachmentOutput,
+            vk::PipelineStageFlagBits::eColorAttachmentOutput,
+            vk::AccessFlags{},
+            vk::AccessFlagBits::eColorAttachmentWrite,
+
         };
+        vk::RenderPassCreateInfo renderPassInfo{vk::RenderPassCreateFlags{},
+                                                /*attachmentCount*/ 1,       &colorAttachment,
+                                                /*subpassCount*/ 1,          &subpass,
+                                                /*dependencyCount*/ 1,       &dependency};
         renderPass = device->createRenderPassUnique(renderPassInfo);
     }
 
@@ -693,25 +701,36 @@ private:
     }
 
     void createSyncObjects() {
-        vk::SemaphoreCreateInfo semaphoreInfo{
-            vk::SemaphoreCreateFlags{}
-        };
-        vk::FenceCreateInfo fenceInfo{
-            vk::FenceCreateFlagBits::eSignaled
-        };
+        vk::SemaphoreCreateInfo semaphoreInfo{vk::SemaphoreCreateFlags{}};
+        vk::FenceCreateInfo fenceInfo{vk::FenceCreateFlagBits::eSignaled};
         imageAvailableSemaphore = device->createSemaphoreUnique(semaphoreInfo);
         renderFinishedSemaphore = device->createSemaphoreUnique(semaphoreInfo);
         inFlightFence = device->createFenceUnique(fenceInfo);
     }
 
     void drawFrame() {
-        device->waitForFences(inFlightFence.get(), true, UINT64_MAX);
+        auto waitResult = device->waitForFences(inFlightFence.get(), true, UINT64_MAX);
+        if (waitResult != vk::Result::eSuccess) {
+            throw std::runtime_error("error while waiting for inFlightFence");
+        }
         device->resetFences(inFlightFence.get());
 
-        uint32_t imageIndex = device->acquireNextImageKHR(swapChain.get(), UINT64_MAX, imageAvailableSemaphore.get(), nullptr);
-        commandBuffers[0]->reset(vk::CommandBufferResetFlags{});
-        recordCommandBuffer(commandBuffers[0].get(), imageIndex);
-
+        uint32_t imageIndex =
+            device->acquireNextImageKHR(swapChain.get(), UINT64_MAX, imageAvailableSemaphore.get(), nullptr).value;
+        vk::CommandBuffer commandBuffer = commandBuffers[0].get();
+        commandBuffer.reset(vk::CommandBufferResetFlags{});
+        recordCommandBuffer(commandBuffer, imageIndex);
+        std::vector<vk::Semaphore> waitSemaphores = {imageAvailableSemaphore.get()};
+        std::vector<vk::Semaphore> signalSemaphores = {renderFinishedSemaphore.get()};
+        vk::PipelineStageFlags waitStages = {vk::PipelineStageFlagBits::eColorAttachmentOutput};
+        vk::SubmitInfo submitInfo{waitSemaphores, waitStages, commandBuffer, signalSemaphores};
+        graphicsQueue.submit(submitInfo, inFlightFence.get());
+        vk::SwapchainKHR swapChains = {swapChain.get()};
+        vk::PresentInfoKHR presentInfo{signalSemaphores, swapChains, imageIndex, nullptr};
+        auto presentResult = presentQueue.presentKHR(presentInfo);
+        if (presentResult != vk::Result::eSuccess) {
+            throw std::runtime_error("failed to invoke presentKHR");
+        }
     }
 
     void mainLoop() {
@@ -728,9 +747,8 @@ private:
                 SDL_UpdateWindowSurface(window);
             }
         }
+        device->waitIdle();
     }
-
-    void cleanup() { SDL_DestroyWindow(window); }
 
 private:
     unsigned int screenWidth = DEFAULT_WIDTH, screenHeight = DEFAULT_HEIGHT;
@@ -748,15 +766,15 @@ private:
     vk::Format swapChainImageFormat;
     vk::Extent2D swapChainExtent;
     std::vector<vk::UniqueImageView> swapChainImageViews;
+    vk::UniqueSemaphore imageAvailableSemaphore;
+    vk::UniqueSemaphore renderFinishedSemaphore;
     vk::UniqueRenderPass renderPass;
     vk::UniquePipelineLayout pipelineLayout;
+    vk::UniqueFence inFlightFence;
     vk::UniquePipeline graphicsPipeline;
     std::vector<vk::UniqueFramebuffer> swapChainFramebuffers;
     vk::UniqueCommandPool commandPool;
     std::vector<vk::UniqueCommandBuffer> commandBuffers;
-    vk::UniqueSemaphore imageAvailableSemaphore;
-    vk::UniqueSemaphore renderFinishedSemaphore;
-    vk::UniqueFence inFlightFence;
 };
 
 int main() {
