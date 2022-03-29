@@ -31,7 +31,10 @@ lldb
 lldb-mi-git
 ninja
 cmake
-amdvlk
+sdl2
+freetype2
+gli (already includes glm)
+amdvlk (or similar for nvidia)
 vulkan-validation-layers
 vulkan-extra-layers
 vulkan-extra-tools

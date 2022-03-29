@@ -26,7 +26,6 @@
 #include <string>
 #include <vector>
 
-
 #include "helpers.hpp"
 
 // CONSTANTS
@@ -521,12 +520,64 @@ private:
         std::vector<char> fragShaderCode = readFile("shaders/frag.spv");
         vk::UniqueShaderModule vertShaderModule = createShaderModule(vertShaderCode);
         vk::UniqueShaderModule fragShaderModule = createShaderModule(fragShaderCode);
-
         vk::PipelineShaderStageCreateInfo vertShaderStageInfo{
             vk::PipelineShaderStageCreateFlags{}, vk::ShaderStageFlagBits::eVertex, vertShaderModule.get(), "main"};
         vk::PipelineShaderStageCreateInfo fragShaderStageInfo{
             vk::PipelineShaderStageCreateFlags{}, vk::ShaderStageFlagBits::eFragment, fragShaderModule.get(), "main"};
         vk::PipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+
+        vk::PipelineVertexInputStateCreateInfo vertexInputInfo{vk::PipelineVertexInputStateCreateFlags{}, 0, nullptr, 0,
+                                                               nullptr};
+        vk::PipelineInputAssemblyStateCreateInfo inputAssembly{vk::PipelineInputAssemblyStateCreateFlags{},
+                                                               vk::PrimitiveTopology::eTriangleList, false};
+        vk::Viewport viewport{
+            0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height),
+            0.0f, 1.0f};
+        vk::Rect2D scissor{{0, 0}, swapChainExtent};
+        vk::PipelineViewportStateCreateInfo viewportState{vk::PipelineViewportStateCreateFlags{}, 1, &viewport, 1,
+                                                          &scissor};
+        vk::PipelineRasterizationStateCreateInfo rasterizer{vk::PipelineRasterizationStateCreateFlags{},
+                                                            /*depthClamp*/ false,
+                                                            /*rasterizeDiscard*/ false,
+                                                            vk::PolygonMode::eFill,
+                                                            vk::CullModeFlagBits::eBack,
+                                                            vk::FrontFace::eClockwise,
+                                                            /*depthBias*/ false,
+                                                            /*depthBiasConstantFactor*/ 0.0f,
+                                                            /*depthBiasClamp*/ 0.0f,
+                                                            /*depthBiasSlopeFactor*/ 0.0f,
+                                                            /*lineWidth*/ 1.0f};
+        vk::PipelineMultisampleStateCreateInfo multisampling{
+            vk::PipelineMultisampleStateCreateFlags{},
+            vk::SampleCountFlagBits::e1,
+            /*sampleShadingEnable*/ false,
+            1.0f,
+            /*pSampleMask*/ nullptr,
+            /*alphaToCoverageEnable*/ false,
+            /*alphaToOneEnable*/ false,
+        };
+        vk::PipelineColorBlendAttachmentState colorBlendAttachment{
+            /*blend*/ false,
+            vk::BlendFactor::eOne,
+            vk::BlendFactor::eZero,
+            vk::BlendOp::eAdd,
+            vk::BlendFactor::eOne,
+            vk::BlendFactor::eZero,
+            vk::BlendOp::eAdd,
+            vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB |
+                vk::ColorComponentFlagBits::eA};
+        vk::PipelineColorBlendStateCreateInfo colorBlending{vk::PipelineColorBlendStateCreateFlags{},
+                                                            /*logicOpEnable*/ false,
+                                                            vk::LogicOp::eCopy,
+                                                            /*attachmentCount*/ 1,
+                                                            &colorBlendAttachment,
+                                                            {0.0f, 0.0f, 0.0f, 0.0f}};
+        std::vector<vk::DynamicState> dynamicStates = {vk::DynamicState::eViewport, vk::DynamicState::eLineWidth};
+        vk::PipelineDynamicStateCreateInfo dynamicState{
+            vk::PipelineDynamicStateCreateFlags{}, static_cast<uint32_t>(dynamicStates.size()), dynamicStates.data()};
+
+        vk::PipelineLayoutCreateInfo pipelineLayoutInfo{vk::PipelineLayoutCreateFlags{}, {}, {}};
+        pipelineLayout = device->createPipelineLayoutUnique(pipelineLayoutInfo);
     }
 
     vk::UniqueShaderModule createShaderModule(const std::vector<char> &code) {
@@ -583,6 +634,7 @@ private:
     vk::Format swapChainImageFormat;
     vk::Extent2D swapChainExtent;
     std::vector<vk::UniqueImageView> swapChainImageViews;
+    vk::UniquePipelineLayout pipelineLayout;
 };
 
 int main() {
