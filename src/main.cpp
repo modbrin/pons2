@@ -182,6 +182,7 @@ private:
         createFramebuffers();
         createCommandPool();
         createCommandBuffer();
+        createSyncObjects();
 
         return true;
     }
@@ -503,8 +504,8 @@ private:
         createInfo.clipped = VK_TRUE;
         createInfo.oldSwapchain = VK_NULL_HANDLE;
 
-        swapchain = device->createSwapchainKHRUnique(createInfo);
-        swapChainImages = device->getSwapchainImagesKHR(swapchain.get());
+        swapChain = device->createSwapchainKHRUnique(createInfo);
+        swapChainImages = device->getSwapchainImagesKHR(swapChain.get());
         swapChainImageFormat = surfaceFormat.format;
         swapChainExtent = extent;
     }
@@ -691,6 +692,28 @@ private:
         commandBuffer.end();
     }
 
+    void createSyncObjects() {
+        vk::SemaphoreCreateInfo semaphoreInfo{
+            vk::SemaphoreCreateFlags{}
+        };
+        vk::FenceCreateInfo fenceInfo{
+            vk::FenceCreateFlagBits::eSignaled
+        };
+        imageAvailableSemaphore = device->createSemaphoreUnique(semaphoreInfo);
+        renderFinishedSemaphore = device->createSemaphoreUnique(semaphoreInfo);
+        inFlightFence = device->createFenceUnique(fenceInfo);
+    }
+
+    void drawFrame() {
+        device->waitForFences(inFlightFence.get(), true, UINT64_MAX);
+        device->resetFences(inFlightFence.get());
+
+        uint32_t imageIndex = device->acquireNextImageKHR(swapChain.get(), UINT64_MAX, imageAvailableSemaphore.get(), nullptr);
+        commandBuffers[0]->reset(vk::CommandBufferResetFlags{});
+        recordCommandBuffer(commandBuffers[0].get(), imageIndex);
+
+    }
+
     void mainLoop() {
         bool keep_window_open = true;
         while (keep_window_open) {
@@ -701,6 +724,7 @@ private:
                     keep_window_open = false;
                     break;
                 }
+                drawFrame();
                 SDL_UpdateWindowSurface(window);
             }
         }
@@ -719,7 +743,7 @@ private:
     vk::UniqueSurfaceKHR surface;
     vk::Queue graphicsQueue;
     vk::Queue presentQueue;
-    vk::UniqueSwapchainKHR swapchain;
+    vk::UniqueSwapchainKHR swapChain;
     std::vector<vk::Image> swapChainImages;
     vk::Format swapChainImageFormat;
     vk::Extent2D swapChainExtent;
@@ -730,6 +754,9 @@ private:
     std::vector<vk::UniqueFramebuffer> swapChainFramebuffers;
     vk::UniqueCommandPool commandPool;
     std::vector<vk::UniqueCommandBuffer> commandBuffers;
+    vk::UniqueSemaphore imageAvailableSemaphore;
+    vk::UniqueSemaphore renderFinishedSemaphore;
+    vk::UniqueFence inFlightFence;
 };
 
 int main() {
