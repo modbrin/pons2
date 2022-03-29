@@ -24,7 +24,9 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
+
 
 #include "helpers.hpp"
 
@@ -175,8 +177,11 @@ private:
         createLogicalDevice();
         createSwapChain();
         createImageViews();
-        createGraphicsPipeline();
         createRenderPass();
+        createGraphicsPipeline();
+        createFramebuffers();
+        createCommandPool();
+        createCommandBuffer();
 
         return true;
     }
@@ -579,6 +584,25 @@ private:
 
         vk::PipelineLayoutCreateInfo pipelineLayoutInfo{vk::PipelineLayoutCreateFlags{}, {}, {}};
         pipelineLayout = device->createPipelineLayoutUnique(pipelineLayoutInfo);
+
+        vk::GraphicsPipelineCreateInfo pipelineInfo{vk::PipelineCreateFlags{},
+                                                    /*stageCount*/ 2,
+                                                    shaderStages,
+                                                    &vertexInputInfo,
+                                                    &inputAssembly,
+                                                    /*pTessellationState*/ nullptr,
+                                                    &viewportState,
+                                                    &rasterizer,
+                                                    &multisampling,
+                                                    /*pDepthStencilState*/ nullptr,
+                                                    &colorBlending,
+                                                    /*pDynamicState*/ nullptr,
+                                                    pipelineLayout.get(),
+                                                    renderPass.get(),
+                                                    /*subpass*/ 0,
+                                                    /*basePipelineHandle*/ nullptr,
+                                                    /*basePipelineIndex*/ -1};
+        graphicsPipeline = device->createGraphicsPipelineUnique(nullptr, pipelineInfo).value;
     }
 
     vk::UniqueShaderModule createShaderModule(const std::vector<char> &code) {
@@ -622,6 +646,51 @@ private:
         renderPass = device->createRenderPassUnique(renderPassInfo);
     }
 
+    void createFramebuffers() {
+        swapChainFramebuffers.reserve(swapChainImageViews.size());
+        for (const auto &imageView : swapChainImageViews) {
+            vk::ImageView attachments[] = {imageView.get()};
+            vk::FramebufferCreateInfo framebufferInfo{vk::FramebufferCreateFlags{},
+                                                      renderPass.get(),
+                                                      /*attachmentCount*/ 1,
+                                                      attachments,
+                                                      swapChainExtent.width,
+                                                      swapChainExtent.height,
+                                                      /*layers*/ 1};
+            swapChainFramebuffers.emplace_back(device->createFramebufferUnique(framebufferInfo));
+        }
+    }
+
+    void createCommandPool() {
+        QueueFamilyIndices queueFamilyIndices = findQueueFamilies(physicalDevice);
+        vk::CommandPoolCreateInfo poolInfo{vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+                                           queueFamilyIndices.graphicsFamily.value()};
+        commandPool = device->createCommandPoolUnique(poolInfo);
+    }
+
+    void createCommandBuffer() {
+        vk::CommandBufferAllocateInfo allocInfo{commandPool.get(), vk::CommandBufferLevel::ePrimary,
+                                                /*commandBufferCount*/ 1};
+        commandBuffers = device->allocateCommandBuffersUnique(allocInfo);
+    }
+
+    void recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t imageIndex) {
+        vk::CommandBufferBeginInfo beginInfo{vk::CommandBufferUsageFlags{},
+                                             /*pInheritanceInfo*/ nullptr};
+        commandBuffer.begin(beginInfo);
+        vk::ClearColorValue clearColorValue{};
+        clearColorValue.setFloat32({0.0f, 0.0f, 0.0f, 0.0f});
+        vk::ClearValue clearColor{clearColorValue};
+        vk::RenderPassBeginInfo renderPassInfo{renderPass.get(), swapChainFramebuffers.at(imageIndex).get(),
+                                               vk::Rect2D{{0, 0}, swapChainExtent},
+                                               /*clearValueCount*/ 1, &clearColor};
+        commandBuffer.beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
+        commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline.get());
+        commandBuffer.draw(3, 1, 0, 0);
+        commandBuffer.endRenderPass();
+        commandBuffer.end();
+    }
+
     void mainLoop() {
         bool keep_window_open = true;
         while (keep_window_open) {
@@ -657,6 +726,10 @@ private:
     std::vector<vk::UniqueImageView> swapChainImageViews;
     vk::UniqueRenderPass renderPass;
     vk::UniquePipelineLayout pipelineLayout;
+    vk::UniquePipeline graphicsPipeline;
+    std::vector<vk::UniqueFramebuffer> swapChainFramebuffers;
+    vk::UniqueCommandPool commandPool;
+    std::vector<vk::UniqueCommandBuffer> commandBuffers;
 };
 
 int main() {
