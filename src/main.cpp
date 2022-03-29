@@ -176,6 +176,7 @@ private:
         createSwapChain();
         createImageViews();
         createGraphicsPipeline();
+        createRenderPass();
 
         return true;
     }
@@ -601,6 +602,26 @@ private:
         return buffer;
     }
 
+    void createRenderPass() {
+        vk::AttachmentDescription colorAttachment{
+            vk::AttachmentDescriptionFlags{}, swapChainImageFormat,          vk::SampleCountFlagBits::e1,
+            vk::AttachmentLoadOp::eClear,     vk::AttachmentStoreOp::eStore, vk::AttachmentLoadOp::eDontCare,
+            vk::AttachmentStoreOp::eDontCare, vk::ImageLayout::eUndefined,   vk::ImageLayout::ePresentSrcKHR};
+        vk::AttachmentReference colorAttachmentRef{/*attachment*/ 0, vk::ImageLayout::eColorAttachmentOptimal};
+        vk::SubpassDescription subpass{
+            vk::SubpassDescriptionFlags{}, vk::PipelineBindPoint::eGraphics,
+            /*inputAttachmentCount*/ 0,
+            /*pInputAttachments*/ nullptr,
+            /*colorAttachmentCount*/ 1,    &colorAttachmentRef,
+        };
+        vk::RenderPassCreateInfo renderPassInfo{
+            vk::RenderPassCreateFlags{},
+            /*attachmentCount*/ 1,       &colorAttachment,
+            /*subpassCount*/ 1,          &subpass,
+        };
+        renderPass = device->createRenderPassUnique(renderPassInfo);
+    }
+
     void mainLoop() {
         bool keep_window_open = true;
         while (keep_window_open) {
@@ -634,6 +655,7 @@ private:
     vk::Format swapChainImageFormat;
     vk::Extent2D swapChainExtent;
     std::vector<vk::UniqueImageView> swapChainImageViews;
+    vk::UniqueRenderPass renderPass;
     vk::UniquePipelineLayout pipelineLayout;
 };
 
