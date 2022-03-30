@@ -33,6 +33,7 @@
 
 const uint32_t DEFAULT_WIDTH = 1024;
 const uint32_t DEFAULT_HEIGHT = 768;
+const uint32_t MAX_FRAMES_IN_FLIGHT = 2;
 
 const std::vector<const char *> gValidationLayers = {"VK_LAYER_KHRONOS_validation"};
 
@@ -142,7 +143,7 @@ public:
         mainLoop();
     }
 
-    ~HelloTriangleApplication() { SDL_DestroyWindow(window); }
+    ~HelloTriangleApplication() { SDL_DestroyWindow(pWindow); }
 
 private:
     bool initWindow() {
@@ -151,19 +152,11 @@ private:
             std::cout << "SDL2 Error: " << SDL_GetError() << "\n";
             return false;
         }
-        window = SDL_CreateWindow("Vulkan Window", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                  static_cast<int>(screenWidth), static_cast<int>(screenHeight),
-                                  SDL_WINDOW_VULKAN | SDL_WINDOW_SHOWN);
-        if (!window) {
+        pWindow = SDL_CreateWindow("Vulkan Window", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                                   static_cast<int>(screenWidth), static_cast<int>(screenHeight),
+                                   SDL_WINDOW_VULKAN | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+        if (!pWindow) {
             std::cout << "Failed to create window\n";
-            std::cout << "SDL2 Error: " << SDL_GetError() << "\n";
-            return false;
-        }
-
-        windowSurface = SDL_GetWindowSurface(window);
-
-        if (!windowSurface) {
-            std::cout << "Failed to get the surface from the window\n";
             std::cout << "SDL2 Error: " << SDL_GetError() << "\n";
             return false;
         }
@@ -182,9 +175,15 @@ private:
         createFramebuffers();
         createSyncObjects();
         createCommandPool();
-        createCommandBuffer();
+        createCommandBuffers();
 
         return true;
+    }
+
+    void framebufferResized(int width, int height) {
+        UNUSED(width);
+        UNUSED(height);
+        bFramebufferResized = true;
     }
 
     void populateDebugMessengerCreateInfo(vk::DebugUtilsMessengerCreateInfoEXT &createInfo) {
@@ -234,11 +233,11 @@ private:
 
     tl::expected<std::vector<const char *>, std::string> getRequiredExtensions() {
         uint32_t sdlExtensionCount = 0;
-        if (!SDL_Vulkan_GetInstanceExtensions(window, &sdlExtensionCount, nullptr)) {
+        if (!SDL_Vulkan_GetInstanceExtensions(pWindow, &sdlExtensionCount, nullptr)) {
             return tl::unexpected(std::string("Can't query instance extension count\n"));
         }
         std::vector<const char *> sdlExtensionNames(sdlExtensionCount);
-        if (!SDL_Vulkan_GetInstanceExtensions(window, &sdlExtensionCount, sdlExtensionNames.data())) {
+        if (!SDL_Vulkan_GetInstanceExtensions(pWindow, &sdlExtensionCount, sdlExtensionNames.data())) {
             return tl::unexpected(std::string("Can't query instance extension names\n"));
         }
 
@@ -404,7 +403,7 @@ private:
 
     void createSurface() {
         VkSurfaceKHR sdlSurface;
-        SDL_bool state = SDL_Vulkan_CreateSurface(window, instance.get(), &sdlSurface);
+        SDL_bool state = SDL_Vulkan_CreateSurface(pWindow, instance.get(), &sdlSurface);
         if (!state) {
             throw std::runtime_error("failed to create window surface");
         }
@@ -447,7 +446,7 @@ private:
             return capabilities.currentExtent;
         } else {
             int width, height;
-            SDL_GL_GetDrawableSize(window, &width, &height);
+            SDL_GL_GetDrawableSize(pWindow, &width, &height);
 
             vk::Extent2D actualExtent = {
                 static_cast<uint32_t>(width),
@@ -523,8 +522,10 @@ private:
     }
 
     void createGraphicsPipeline() {
-        std::vector<char> vertShaderCode = readFile("shaders/vert.spv");
-        std::vector<char> fragShaderCode = readFile("shaders/frag.spv");
+        std::vector<char> vertShaderCode =
+            readFile("/home/modbrin/projects/pons2/shaders/vert.spv"); // FIXME: find a better way to handle relative
+                                                                       // paths hell during debug
+        std::vector<char> fragShaderCode = readFile("/home/modbrin/projects/pons2/shaders/frag.spv");
         vk::UniqueShaderModule vertShaderModule = createShaderModule(vertShaderCode);
         vk::UniqueShaderModule fragShaderModule = createShaderModule(fragShaderCode);
         vk::PipelineShaderStageCreateInfo vertShaderStageInfo{
@@ -677,9 +678,9 @@ private:
         commandPool = device->createCommandPoolUnique(poolInfo);
     }
 
-    void createCommandBuffer() {
+    void createCommandBuffers() {
         vk::CommandBufferAllocateInfo allocInfo{commandPool.get(), vk::CommandBufferLevel::ePrimary,
-                                                /*commandBufferCount*/ 1};
+                                                /*commandBufferCount*/ MAX_FRAMES_IN_FLIGHT};
         commandBuffers = device->allocateCommandBuffersUnique(allocInfo);
     }
 
@@ -701,59 +702,131 @@ private:
     }
 
     void createSyncObjects() {
+        imageAvailableSemaphores.reserve(MAX_FRAMES_IN_FLIGHT);
+        renderFinishedSemaphores.reserve(MAX_FRAMES_IN_FLIGHT);
+        inFlightFences.reserve(MAX_FRAMES_IN_FLIGHT);
+
         vk::SemaphoreCreateInfo semaphoreInfo{vk::SemaphoreCreateFlags{}};
         vk::FenceCreateInfo fenceInfo{vk::FenceCreateFlagBits::eSignaled};
-        imageAvailableSemaphore = device->createSemaphoreUnique(semaphoreInfo);
-        renderFinishedSemaphore = device->createSemaphoreUnique(semaphoreInfo);
-        inFlightFence = device->createFenceUnique(fenceInfo);
+        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+            imageAvailableSemaphores.emplace_back(device->createSemaphoreUnique(semaphoreInfo));
+            renderFinishedSemaphores.emplace_back(device->createSemaphoreUnique(semaphoreInfo));
+            inFlightFences.emplace_back(device->createFenceUnique(fenceInfo));
+        }
+    }
+
+    void cleanupSwapChain() {
+        for (auto &framebuffer : swapChainFramebuffers) {
+            device->destroyFramebuffer(framebuffer.release());
+        }
+        swapChainFramebuffers.clear();
+        device->destroyPipeline(graphicsPipeline.release());
+        device->destroyPipelineLayout(pipelineLayout.release());
+        device->destroyRenderPass(renderPass.release());
+        for (auto &imageView : swapChainImageViews) {
+            device->destroyImageView(imageView.release());
+        }
+        swapChainImageViews.clear();
+        device->destroySwapchainKHR(swapChain.release());
+    }
+
+    void recreateSwapChain() {
+        int width, height;
+        SDL_GL_GetDrawableSize(pWindow, &width, &height);
+        while (width == 0 || height == 0) {
+            // TODO: investigate, this should be probably done differently in sdl
+            SDL_GL_GetDrawableSize(pWindow, &width, &height);
+            SDL_WaitEvent(nullptr);
+        }
+
+        device->waitIdle();
+
+        cleanupSwapChain();
+
+        createSwapChain();
+        createImageViews();
+        createRenderPass();
+        createGraphicsPipeline();
+        createFramebuffers();
+    }
+
+    void handleEvents() {
+        SDL_Event event;
+        while (SDL_PollEvent(&event) > 0) {
+            switch (event.type) {
+            case SDL_QUIT:
+                bKeepWindowOpen = false;
+                break;
+            case SDL_WINDOWEVENT:
+                switch (event.window.event) {
+                case SDL_WINDOWEVENT_SIZE_CHANGED:
+                    framebufferResized(event.window.data1, event.window.data2);
+                    break;
+                case SDL_WINDOWEVENT_RESTORED:
+                    bIsWindowMinimized = false;
+                    break;
+                case SDL_WINDOWEVENT_MINIMIZED:
+                    bIsWindowMinimized = true;
+                    break;
+                }
+                break;
+            }
+        }
     }
 
     void drawFrame() {
-        auto waitResult = device->waitForFences(inFlightFence.get(), true, UINT64_MAX);
+        auto waitResult = device->waitForFences(inFlightFences[currentFrame].get(), true, UINT64_MAX);
         if (waitResult != vk::Result::eSuccess) {
             throw std::runtime_error("error while waiting for inFlightFence");
         }
-        device->resetFences(inFlightFence.get());
 
-        uint32_t imageIndex =
-            device->acquireNextImageKHR(swapChain.get(), UINT64_MAX, imageAvailableSemaphore.get(), nullptr).value;
-        vk::CommandBuffer commandBuffer = commandBuffers[0].get();
+        vk::ResultValue<uint32_t> acquireImageResult = device->acquireNextImageKHR(
+            swapChain.get(), UINT64_MAX, imageAvailableSemaphores[currentFrame].get(), nullptr);
+        if (acquireImageResult.result == vk::Result::eErrorOutOfDateKHR) {
+            recreateSwapChain();
+            return;
+        } else if (acquireImageResult.result != vk::Result::eSuccess &&
+                   acquireImageResult.result != vk::Result::eSuboptimalKHR) {
+            throw std::runtime_error("failed to acquire swap chain image");
+        }
+        device->resetFences(inFlightFences[currentFrame].get());
+
+        vk::CommandBuffer commandBuffer = commandBuffers[currentFrame].get();
         commandBuffer.reset(vk::CommandBufferResetFlags{});
-        recordCommandBuffer(commandBuffer, imageIndex);
-        std::vector<vk::Semaphore> waitSemaphores = {imageAvailableSemaphore.get()};
-        std::vector<vk::Semaphore> signalSemaphores = {renderFinishedSemaphore.get()};
+        recordCommandBuffer(commandBuffer, acquireImageResult.value);
+        std::vector<vk::Semaphore> waitSemaphores = {imageAvailableSemaphores[currentFrame].get()};
+        std::vector<vk::Semaphore> signalSemaphores = {renderFinishedSemaphores[currentFrame].get()};
         vk::PipelineStageFlags waitStages = {vk::PipelineStageFlagBits::eColorAttachmentOutput};
         vk::SubmitInfo submitInfo{waitSemaphores, waitStages, commandBuffer, signalSemaphores};
-        graphicsQueue.submit(submitInfo, inFlightFence.get());
+        graphicsQueue.submit(submitInfo, inFlightFences[currentFrame].get());
         vk::SwapchainKHR swapChains = {swapChain.get()};
-        vk::PresentInfoKHR presentInfo{signalSemaphores, swapChains, imageIndex, nullptr};
-        auto presentResult = presentQueue.presentKHR(presentInfo);
-        if (presentResult != vk::Result::eSuccess) {
+        vk::PresentInfoKHR presentInfo{signalSemaphores, swapChains, acquireImageResult.value, nullptr};
+        vk::Result presentResult = presentQueue.presentKHR(presentInfo);
+        if (presentResult == vk::Result::eErrorOutOfDateKHR || presentResult == vk::Result::eSuboptimalKHR ||
+            bFramebufferResized) {
+            bFramebufferResized = false;
+            recreateSwapChain();
+        } else if (presentResult != vk::Result::eSuccess) {
             throw std::runtime_error("failed to invoke presentKHR");
         }
+        currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
 
     void mainLoop() {
-        bool keep_window_open = true;
-        while (keep_window_open) {
-            SDL_Event e;
-            while (SDL_PollEvent(&e) > 0) {
-                switch (e.type) {
-                case SDL_QUIT:
-                    keep_window_open = false;
-                    break;
-                }
-                drawFrame();
-                SDL_UpdateWindowSurface(window);
-            }
+        while (bKeepWindowOpen) {
+            handleEvents();
+            drawFrame();
         }
         device->waitIdle();
     }
 
 private:
+    uint32_t currentFrame = 0;
+    bool bKeepWindowOpen = true;
+    bool bFramebufferResized = false;
+    bool bIsWindowMinimized = false;
     unsigned int screenWidth = DEFAULT_WIDTH, screenHeight = DEFAULT_HEIGHT;
-    SDL_Window *window;
-    SDL_Surface *windowSurface;
+    SDL_Window *pWindow;
     vk::UniqueInstance instance;
     vk::DebugUtilsMessengerEXT debugMessenger;
     vk::PhysicalDevice physicalDevice;
@@ -766,11 +839,11 @@ private:
     vk::Format swapChainImageFormat;
     vk::Extent2D swapChainExtent;
     std::vector<vk::UniqueImageView> swapChainImageViews;
-    vk::UniqueSemaphore imageAvailableSemaphore;
-    vk::UniqueSemaphore renderFinishedSemaphore;
+    std::vector<vk::UniqueSemaphore> imageAvailableSemaphores;
+    std::vector<vk::UniqueSemaphore> renderFinishedSemaphores;
+    std::vector<vk::UniqueFence> inFlightFences;
     vk::UniqueRenderPass renderPass;
     vk::UniquePipelineLayout pipelineLayout;
-    vk::UniqueFence inFlightFence;
     vk::UniquePipeline graphicsPipeline;
     std::vector<vk::UniqueFramebuffer> swapChainFramebuffers;
     vk::UniqueCommandPool commandPool;
