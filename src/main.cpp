@@ -1,6 +1,4 @@
-#include <vulkan/vk_platform.h>
 #include <vulkan/vulkan.hpp>
-#include <vulkan/vulkan_core.h>
 #include <vulkan/vulkan_enums.hpp>
 #include <vulkan/vulkan_handles.hpp>
 #include <vulkan/vulkan_structs.hpp>
@@ -27,7 +25,10 @@
 #include <unordered_map>
 #include <vector>
 
+#include "common.h"
 #include "helpers.hpp"
+#include "mock.h"
+
 
 // CONSTANTS
 
@@ -173,9 +174,10 @@ private:
         createRenderPass();
         createGraphicsPipeline();
         createFramebuffers();
-        createSyncObjects();
         createCommandPool();
+        createVertexBuffer();
         createCommandBuffers();
+        createSyncObjects();
 
         return true;
     }
@@ -523,9 +525,9 @@ private:
 
     void createGraphicsPipeline() {
         std::vector<char> vertShaderCode =
-            readFile("/home/modbrin/projects/pons2/shaders/vert.spv"); // FIXME: find a better way to handle relative
-                                                                       // paths hell during debug
-        std::vector<char> fragShaderCode = readFile("/home/modbrin/projects/pons2/shaders/frag.spv");
+            readFile("/home/modbrin/projects/pons2/shaders/bin/vert.spv"); // FIXME: find a better way to handle
+                                                                           // relative paths hell during debug
+        std::vector<char> fragShaderCode = readFile("/home/modbrin/projects/pons2/shaders/bin/frag.spv");
         vk::UniqueShaderModule vertShaderModule = createShaderModule(vertShaderCode);
         vk::UniqueShaderModule fragShaderModule = createShaderModule(fragShaderCode);
         vk::PipelineShaderStageCreateInfo vertShaderStageInfo{
@@ -534,8 +536,11 @@ private:
             vk::PipelineShaderStageCreateFlags{}, vk::ShaderStageFlagBits::eFragment, fragShaderModule.get(), "main"};
         vk::PipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
-        vk::PipelineVertexInputStateCreateInfo vertexInputInfo{vk::PipelineVertexInputStateCreateFlags{}, 0, nullptr, 0,
-                                                               nullptr};
+        auto bindingDescription = Vertex::getBindingDescription();
+        auto attributeDescription = Vertex::getAttributeDescriptions();
+
+        vk::PipelineVertexInputStateCreateInfo vertexInputInfo{vk::PipelineVertexInputStateCreateFlags{},
+                                                               bindingDescription, attributeDescription};
         vk::PipelineInputAssemblyStateCreateInfo inputAssembly{vk::PipelineInputAssemblyStateCreateFlags{},
                                                                vk::PrimitiveTopology::eTriangleList, false};
         vk::Viewport viewport{
@@ -696,7 +701,10 @@ private:
                                                /*clearValueCount*/ 1, &clearColor};
         commandBuffer.beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
         commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline.get());
-        commandBuffer.draw(3, 1, 0, 0);
+        vk::Buffer vertexBuffers[] = {vertexBuffer.get()};
+        vk::DeviceSize offsets[] = {0};
+        commandBuffer.bindVertexBuffers(0, 1, vertexBuffers, offsets);
+        commandBuffer.draw(static_cast<uint32_t>(vertices.size()), 1, 0, 0);
         commandBuffer.endRenderPass();
         commandBuffer.end();
     }
@@ -738,16 +746,47 @@ private:
             SDL_GL_GetDrawableSize(pWindow, &width, &height);
             SDL_WaitEvent(nullptr);
         }
-
         device->waitIdle();
 
         cleanupSwapChain();
-
         createSwapChain();
         createImageViews();
         createRenderPass();
         createGraphicsPipeline();
         createFramebuffers();
+    }
+
+    void createVertexBuffer() {
+        vk::BufferCreateInfo bufferInfo{vk::BufferCreateFlags{},
+                                        /*size*/ sizeof(vertices[0]) * vertices.size(),
+                                        vk::BufferUsageFlagBits::eVertexBuffer, vk::SharingMode::eExclusive};
+        vertexBuffer = device->createBufferUnique(bufferInfo);
+
+        vk::MemoryRequirements memRequirements = device->getBufferMemoryRequirements(vertexBuffer.get());
+        vk::MemoryAllocateInfo allocInfo{
+            memRequirements.size,
+            findMemoryType(memRequirements.memoryTypeBits,
+                           vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent)};
+        vertexBufferMemory = device->allocateMemoryUnique(allocInfo);
+        device->bindBufferMemory(vertexBuffer.get(), vertexBufferMemory.get(), 0);
+        void *data;
+        vk::Result result =
+            device->mapMemory(vertexBufferMemory.get(), 0, bufferInfo.size, vk::MemoryMapFlags{}, &data);
+        if (result != vk::Result::eSuccess) {
+            throw std::runtime_error("failed to map vertexBuffer memory");
+        }
+        memcpy(data, vertices.data(), static_cast<size_t>(bufferInfo.size));
+        device->unmapMemory(vertexBufferMemory.get());
+    }
+
+    uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) {
+        vk::PhysicalDeviceMemoryProperties memProperties = physicalDevice.getMemoryProperties();
+        for (uint32_t i = 0; i < memProperties.memoryTypeCount; ++i) {
+            if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+                return i;
+            }
+        }
+        throw std::runtime_error("failed to find suitable memory type");
     }
 
     void handleEvents() {
@@ -848,6 +887,8 @@ private:
     std::vector<vk::UniqueFramebuffer> swapChainFramebuffers;
     vk::UniqueCommandPool commandPool;
     std::vector<vk::UniqueCommandBuffer> commandBuffers;
+    vk::UniqueDeviceMemory vertexBufferMemory;
+    vk::UniqueBuffer vertexBuffer;
 };
 
 int main() {

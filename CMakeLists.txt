@@ -15,7 +15,7 @@ find_package(assimp CONFIG REQUIRED)
 find_package(tl-expected CONFIG REQUIRED)
 # find_package(freetype CONFIG REQUIRED)
 
-add_executable(pons2 src/helpers.hpp src/main.cpp)
+add_executable(pons2 src/helpers.hpp src/main.cpp src/common.h src/common.cpp src/mock.h)
 
 target_link_libraries(pons2 PRIVATE Vulkan::Vulkan SDL2)
 # target_link_libraries(pons2 PRIVATE freetype)

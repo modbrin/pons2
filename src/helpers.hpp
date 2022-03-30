@@ -3,8 +3,7 @@
 #include <variant>
 
 namespace pons {
-template <typename T> // size 8 for int, 40 for string
-struct Result : protected std::variant<std::monostate, T> {
+template <typename T> struct Result : protected std::variant<std::monostate, T> {
     explicit constexpr Result() noexcept = default;
     constexpr Result(T const &&t) noexcept : std::variant<std::monostate, T>{t} {}
 
