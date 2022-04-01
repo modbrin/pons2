@@ -1,3 +1,4 @@
+#include <tuple>
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_enums.hpp>
 #include <vulkan/vulkan_handles.hpp>
@@ -28,7 +29,6 @@
 #include "common.h"
 #include "helpers.hpp"
 #include "mock.h"
-
 
 // CONSTANTS
 
@@ -756,27 +756,56 @@ private:
         createFramebuffers();
     }
 
-    void createVertexBuffer() {
-        vk::BufferCreateInfo bufferInfo{vk::BufferCreateFlags{},
-                                        /*size*/ sizeof(vertices[0]) * vertices.size(),
-                                        vk::BufferUsageFlagBits::eVertexBuffer, vk::SharingMode::eExclusive};
-        vertexBuffer = device->createBufferUnique(bufferInfo);
+    std::tuple<vk::UniqueBuffer, vk::UniqueDeviceMemory> createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
+                                                                      vk::MemoryPropertyFlags properties) {
+        vk::BufferCreateInfo bufferInfo{vk::BufferCreateFlags{}, size, usage, vk::SharingMode::eExclusive};
+        vk::UniqueBuffer buffer = device->createBufferUnique(bufferInfo);
 
-        vk::MemoryRequirements memRequirements = device->getBufferMemoryRequirements(vertexBuffer.get());
-        vk::MemoryAllocateInfo allocInfo{
-            memRequirements.size,
-            findMemoryType(memRequirements.memoryTypeBits,
-                           vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent)};
-        vertexBufferMemory = device->allocateMemoryUnique(allocInfo);
-        device->bindBufferMemory(vertexBuffer.get(), vertexBufferMemory.get(), 0);
+        vk::MemoryRequirements memRequirements = device->getBufferMemoryRequirements(buffer.get());
+        vk::MemoryAllocateInfo allocInfo{memRequirements.size,
+                                         findMemoryType(memRequirements.memoryTypeBits, properties)};
+        vk::UniqueDeviceMemory bufferMemory = device->allocateMemoryUnique(allocInfo);
+        device->bindBufferMemory(buffer.get(), bufferMemory.get(), 0);
+        return std::forward_as_tuple(std::move(buffer), std::move(bufferMemory));
+    }
+
+    void createVertexBuffer() {
+        vk::DeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
+
+        auto [stagingBuffer, stagingBufferMemory] =
+            createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc,
+                         vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
         void *data;
-        vk::Result result =
-            device->mapMemory(vertexBufferMemory.get(), 0, bufferInfo.size, vk::MemoryMapFlags{}, &data);
+        vk::Result result = device->mapMemory(stagingBufferMemory.get(), 0, bufferSize, vk::MemoryMapFlags{}, &data);
         if (result != vk::Result::eSuccess) {
-            throw std::runtime_error("failed to map vertexBuffer memory");
+            throw std::runtime_error("failed to map stagingBuffer memory");
         }
-        memcpy(data, vertices.data(), static_cast<size_t>(bufferInfo.size));
-        device->unmapMemory(vertexBufferMemory.get());
+        memcpy(data, vertices.data(), static_cast<size_t>(bufferSize));
+        device->unmapMemory(stagingBufferMemory.get());
+        std::tie(vertexBuffer, vertexBufferMemory) =
+            createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer,
+                         vk::MemoryPropertyFlagBits::eDeviceLocal);
+        copyBuffer(stagingBuffer.get(), vertexBuffer.get(), bufferSize);
+    }
+
+    void copyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::DeviceSize size) {
+        vk::CommandBufferAllocateInfo allocInfo{commandPool.get(), vk::CommandBufferLevel::ePrimary,
+                                                /*commandBufferCount*/ 1};
+        vk::UniqueCommandBuffer commandBuffer = std::move(device->allocateCommandBuffersUnique(allocInfo)[0]);
+        vk::CommandBufferBeginInfo beginInfo{vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
+        commandBuffer->begin(beginInfo);
+        vk::BufferCopy copyRegion{/*srcOffset*/ 0,
+                                  /*dstOffset*/ 0, size};
+        commandBuffer->copyBuffer(srcBuffer, dstBuffer, 1, &copyRegion);
+        commandBuffer->end();
+        vk::SubmitInfo submitInfo{
+            /*waitSemaphoreCount*/ 0,
+            /*pWaitSemaphores*/ nullptr,
+            /*pWaitDstStageMask*/ nullptr,
+            /*commandBufferCount*/ 1,      &commandBuffer.get(),
+        };
+        graphicsQueue.submit(submitInfo, nullptr);
+        graphicsQueue.waitIdle();
     }
 
     uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) {
