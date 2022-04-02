@@ -176,6 +176,7 @@ private:
         createFramebuffers();
         createCommandPool();
         createVertexBuffer();
+        createIndexBuffer();
         createCommandBuffers();
         createSyncObjects();
 
@@ -704,7 +705,8 @@ private:
         vk::Buffer vertexBuffers[] = {vertexBuffer.get()};
         vk::DeviceSize offsets[] = {0};
         commandBuffer.bindVertexBuffers(0, 1, vertexBuffers, offsets);
-        commandBuffer.draw(static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+        commandBuffer.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint16);
+        commandBuffer.drawIndexed(static_cast<uint32_t>(mockIndices.size()), 1, 0, 0, 0);
         commandBuffer.endRenderPass();
         commandBuffer.end();
     }
@@ -770,8 +772,7 @@ private:
     }
 
     void createVertexBuffer() {
-        vk::DeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
-
+        vk::DeviceSize bufferSize = sizeof(mockVertices[0]) * mockVertices.size();
         auto [stagingBuffer, stagingBufferMemory] =
             createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc,
                          vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
@@ -780,12 +781,30 @@ private:
         if (result != vk::Result::eSuccess) {
             throw std::runtime_error("failed to map stagingBuffer memory");
         }
-        memcpy(data, vertices.data(), static_cast<size_t>(bufferSize));
+        memcpy(data, mockVertices.data(), static_cast<size_t>(bufferSize));
         device->unmapMemory(stagingBufferMemory.get());
         std::tie(vertexBuffer, vertexBufferMemory) =
             createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer,
                          vk::MemoryPropertyFlagBits::eDeviceLocal);
         copyBuffer(stagingBuffer.get(), vertexBuffer.get(), bufferSize);
+    }
+
+    void createIndexBuffer() {
+        vk::DeviceSize bufferSize = sizeof(mockIndices[0]) * mockIndices.size();
+        auto [stagingBuffer, stagingBufferMemory] =
+            createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc,
+                         vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+        void *data;
+        vk::Result result = device->mapMemory(stagingBufferMemory.get(), 0, bufferSize, vk::MemoryMapFlags{}, &data);
+        if (result != vk::Result::eSuccess) {
+            throw std::runtime_error("failed to map stagingBuffer memory");
+        }
+        memcpy(data, mockIndices.data(), static_cast<size_t>(bufferSize));
+        device->unmapMemory(stagingBufferMemory.get());
+        std::tie(indexBuffer, indexBufferMemory) =
+            createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer,
+                         vk::MemoryPropertyFlagBits::eDeviceLocal);
+        copyBuffer(stagingBuffer.get(), indexBuffer.get(), bufferSize);
     }
 
     void copyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::DeviceSize size) {
@@ -918,6 +937,8 @@ private:
     std::vector<vk::UniqueCommandBuffer> commandBuffers;
     vk::UniqueDeviceMemory vertexBufferMemory;
     vk::UniqueBuffer vertexBuffer;
+    vk::UniqueDeviceMemory indexBufferMemory;
+    vk::UniqueBuffer indexBuffer;
 };
 
 int main() {
