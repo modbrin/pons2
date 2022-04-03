@@ -6,14 +6,17 @@
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/mat4x4.hpp>
 #include <glm/vec4.hpp>
 #include <tl/expected.hpp>
+
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_video.h>
 #include <SDL2/SDL_vulkan.h>
 
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -25,6 +28,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+
 
 #include "common.h"
 #include "helpers.hpp"
@@ -172,11 +176,13 @@ private:
         createSwapChain();
         createImageViews();
         createRenderPass();
+        createDescriptorSetLayout();
         createGraphicsPipeline();
         createFramebuffers();
         createCommandPool();
         createVertexBuffer();
         createIndexBuffer();
+        createUniformBuffers();
         createCommandBuffers();
         createSyncObjects();
 
@@ -524,6 +530,15 @@ private:
         }
     }
 
+    void createDescriptorSetLayout() {
+        vk::DescriptorSetLayoutBinding uboLayoutBinding{/*binding*/ 0, vk::DescriptorType::eUniformBuffer,
+                                                        /*descriptorCount*/ 1, vk::ShaderStageFlagBits::eVertex,
+                                                        nullptr};
+        vk::DescriptorSetLayoutCreateInfo layoutInfo{vk::DescriptorSetLayoutCreateFlags{},
+                                                     /*bindingCount*/ 1, &uboLayoutBinding};
+        descriptorSetLayout = device->createDescriptorSetLayoutUnique(layoutInfo);
+    }
+
     void createGraphicsPipeline() {
         std::vector<char> vertShaderCode =
             readFile("/home/modbrin/projects/pons2/shaders/bin/vert.spv"); // FIXME: find a better way to handle
@@ -590,7 +605,7 @@ private:
         vk::PipelineDynamicStateCreateInfo dynamicState{
             vk::PipelineDynamicStateCreateFlags{}, static_cast<uint32_t>(dynamicStates.size()), dynamicStates.data()};
 
-        vk::PipelineLayoutCreateInfo pipelineLayoutInfo{vk::PipelineLayoutCreateFlags{}, {}, {}};
+        vk::PipelineLayoutCreateInfo pipelineLayoutInfo{vk::PipelineLayoutCreateFlags{}, descriptorSetLayout.get(), {}};
         pipelineLayout = device->createPipelineLayoutUnique(pipelineLayoutInfo);
 
         vk::GraphicsPipelineCreateInfo pipelineInfo{vk::PipelineCreateFlags{},
@@ -738,6 +753,14 @@ private:
         }
         swapChainImageViews.clear();
         device->destroySwapchainKHR(swapChain.release());
+        for (auto &buffer : uniformBuffers) {
+            device->destroyBuffer(buffer.release());
+        }
+        uniformBuffers.clear();
+        for (auto &bufferMemory : uniformBuffersMemory) {
+            device->freeMemory(bufferMemory.release());
+        }
+        uniformBuffersMemory.clear();
     }
 
     void recreateSwapChain() {
@@ -756,6 +779,8 @@ private:
         createRenderPass();
         createGraphicsPipeline();
         createFramebuffers();
+        createUniformBuffers();
+        // createCommandBuffers(); //TODO: is it required to be recreated?
     }
 
     std::tuple<vk::UniqueBuffer, vk::UniqueDeviceMemory> createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
@@ -837,6 +862,40 @@ private:
         throw std::runtime_error("failed to find suitable memory type");
     }
 
+    void createUniformBuffers() {
+        vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
+        uniformBuffers.reserve(MAX_FRAMES_IN_FLIGHT);
+        uniformBuffersMemory.reserve(MAX_FRAMES_IN_FLIGHT);
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+            auto [buffer, bufferMemory] =
+                createBuffer(bufferSize, vk::BufferUsageFlagBits::eUniformBuffer,
+                             vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+            uniformBuffers.emplace_back(std::move(buffer));
+            uniformBuffersMemory.emplace_back(std::move(bufferMemory));
+        }
+    }
+
+    void updateUniformBuffer(uint32_t currentImage) {
+        static auto startTime = std::chrono::high_resolution_clock::now();
+        auto currentTime = std::chrono::high_resolution_clock::now();
+        float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+
+        UniformBufferObject ubo{
+            .model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
+            .view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
+            .proj = glm::perspective(glm::radians(45.0f),
+                                     swapChainExtent.width / static_cast<float>(swapChainExtent.height), 0.1f, 10.0f)};
+        ubo.proj[1][1] *= -1.0f; // flip Y coordinate
+        void *data;
+        vk::Result result =
+            device->mapMemory(uniformBuffersMemory[currentImage].get(), 0, sizeof(ubo), vk::MemoryMapFlags{}, &data);
+        if (result != vk::Result::eSuccess) {
+            throw std::runtime_error("failed to map memory of uniform buffer");
+        }
+        memcpy(data, &ubo, sizeof(ubo));
+        device->unmapMemory(uniformBuffersMemory[currentImage].get());
+    }
+
     void handleEvents() {
         SDL_Event event;
         while (SDL_PollEvent(&event) > 0) {
@@ -884,6 +943,7 @@ private:
         std::vector<vk::Semaphore> waitSemaphores = {imageAvailableSemaphores[currentFrame].get()};
         std::vector<vk::Semaphore> signalSemaphores = {renderFinishedSemaphores[currentFrame].get()};
         vk::PipelineStageFlags waitStages = {vk::PipelineStageFlagBits::eColorAttachmentOutput};
+        updateUniformBuffer(currentFrame);
         vk::SubmitInfo submitInfo{waitSemaphores, waitStages, commandBuffer, signalSemaphores};
         graphicsQueue.submit(submitInfo, inFlightFences[currentFrame].get());
         vk::SwapchainKHR swapChains = {swapChain.get()};
@@ -930,6 +990,7 @@ private:
     std::vector<vk::UniqueSemaphore> renderFinishedSemaphores;
     std::vector<vk::UniqueFence> inFlightFences;
     vk::UniqueRenderPass renderPass;
+    vk::UniqueDescriptorSetLayout descriptorSetLayout;
     vk::UniquePipelineLayout pipelineLayout;
     vk::UniquePipeline graphicsPipeline;
     std::vector<vk::UniqueFramebuffer> swapChainFramebuffers;
@@ -939,6 +1000,8 @@ private:
     vk::UniqueBuffer vertexBuffer;
     vk::UniqueDeviceMemory indexBufferMemory;
     vk::UniqueBuffer indexBuffer;
+    std::vector<vk::UniqueBuffer> uniformBuffers;
+    std::vector<vk::UniqueDeviceMemory> uniformBuffersMemory;
 };
 
 int main() {
