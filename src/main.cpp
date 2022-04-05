@@ -1,20 +1,17 @@
-#include <tuple>
-#include <vulkan/vulkan.hpp>
-#include <vulkan/vulkan_enums.hpp>
-#include <vulkan/vulkan_handles.hpp>
-#include <vulkan/vulkan_structs.hpp>
-
 #define GLM_FORCE_RADIANS
+#define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_video.h>
+#include <SDL2/SDL_vulkan.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/mat4x4.hpp>
 #include <glm/vec4.hpp>
 #include <tl/expected.hpp>
-
-
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_video.h>
-#include <SDL2/SDL_vulkan.h>
+#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan_enums.hpp>
+#include <vulkan/vulkan_handles.hpp>
+#include <vulkan/vulkan_structs.hpp>
 
 #include <chrono>
 #include <cstdint>
@@ -26,9 +23,9 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
-
 
 #include "common.h"
 #include "helpers.hpp"
@@ -183,6 +180,8 @@ private:
         createVertexBuffer();
         createIndexBuffer();
         createUniformBuffers();
+        createDescriptorPool();
+        createDescriptorSets();
         createCommandBuffers();
         createSyncObjects();
 
@@ -356,7 +355,7 @@ private:
     }
 
     void pickPhysicalDevice() {
-        physicalDevice = VK_NULL_HANDLE;
+        physicalDevice = nullptr;
         std::vector<vk::PhysicalDevice> physicalDevices = instance->enumeratePhysicalDevices();
         if (physicalDevices.empty()) {
             throw std::runtime_error("failed to find GPUs with Vulkan support!");
@@ -510,7 +509,7 @@ private:
         createInfo.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
         createInfo.presentMode = presentMode;
         createInfo.clipped = VK_TRUE;
-        createInfo.oldSwapchain = VK_NULL_HANDLE;
+        createInfo.oldSwapchain = nullptr;
 
         swapChain = device->createSwapchainKHRUnique(createInfo);
         swapChainImages = device->getSwapchainImagesKHR(swapChain.get());
@@ -570,7 +569,7 @@ private:
                                                             /*rasterizeDiscard*/ false,
                                                             vk::PolygonMode::eFill,
                                                             vk::CullModeFlagBits::eBack,
-                                                            vk::FrontFace::eClockwise,
+                                                            vk::FrontFace::eCounterClockwise,
                                                             /*depthBias*/ false,
                                                             /*depthBiasConstantFactor*/ 0.0f,
                                                             /*depthBiasClamp*/ 0.0f,
@@ -721,6 +720,8 @@ private:
         vk::DeviceSize offsets[] = {0};
         commandBuffer.bindVertexBuffers(0, 1, vertexBuffers, offsets);
         commandBuffer.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint16);
+        commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout.get(), 0, 1,
+                                         &descriptorSets.at(currentFrame), 0, nullptr);
         commandBuffer.drawIndexed(static_cast<uint32_t>(mockIndices.size()), 1, 0, 0, 0);
         commandBuffer.endRenderPass();
         commandBuffer.end();
@@ -753,14 +754,16 @@ private:
         }
         swapChainImageViews.clear();
         device->destroySwapchainKHR(swapChain.release());
-        for (auto &buffer : uniformBuffers) {
-            device->destroyBuffer(buffer.release());
-        }
-        uniformBuffers.clear();
-        for (auto &bufferMemory : uniformBuffersMemory) {
-            device->freeMemory(bufferMemory.release());
-        }
-        uniformBuffersMemory.clear();
+
+        // TODO: is this necessary?
+        // for (auto &buffer : uniformBuffers) {
+        //     device->destroyBuffer(buffer.release());
+        // }
+        // uniformBuffers.clear();
+        // for (auto &bufferMemory : uniformBuffersMemory) {
+        //     device->freeMemory(bufferMemory.release());
+        // }
+        // uniformBuffersMemory.clear();
     }
 
     void recreateSwapChain() {
@@ -779,8 +782,12 @@ private:
         createRenderPass();
         createGraphicsPipeline();
         createFramebuffers();
-        createUniformBuffers();
-        // createCommandBuffers(); //TODO: is it required to be recreated?
+
+        // TODO: is this necessary?
+        // createUniformBuffers();
+        // createCommandBuffers();
+        // createDescriptorPool();
+        // createDescriptorSets();
     }
 
     std::tuple<vk::UniqueBuffer, vk::UniqueDeviceMemory> createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
@@ -896,6 +903,30 @@ private:
         device->unmapMemory(uniformBuffersMemory[currentImage].get());
     }
 
+    void createDescriptorPool() {
+        vk::DescriptorPoolSize poolSize{vk::DescriptorType::eUniformBuffer,
+                                        /*descriptorCount*/ static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT)};
+        vk::DescriptorPoolCreateInfo poolInfo{vk::DescriptorPoolCreateFlags{},
+                                              /*maxSets*/ static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT), poolSize};
+        descriptorPool = device->createDescriptorPoolUnique(poolInfo);
+    }
+
+    void createDescriptorSets() {
+        std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, descriptorSetLayout.get());
+        vk::DescriptorSetAllocateInfo allocInfo{descriptorPool.get(), layouts};
+        descriptorSets = device->allocateDescriptorSets(allocInfo);
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            vk::DescriptorBufferInfo bufferInfo{uniformBuffers[i].get(),
+                                                /*offset*/ 0, sizeof(UniformBufferObject)};
+            vk::WriteDescriptorSet descriptorWrite{
+                descriptorSets[i],
+                /*dstBinding*/ 0,
+                /*dstArrayElement*/ 0,
+                /*descriptorCount*/ 1, vk::DescriptorType::eUniformBuffer, nullptr, &bufferInfo, nullptr};
+            device->updateDescriptorSets(1, &descriptorWrite, 0, nullptr);
+        }
+    }
+
     void handleEvents() {
         SDL_Event event;
         while (SDL_PollEvent(&event) > 0) {
@@ -1002,6 +1033,8 @@ private:
     vk::UniqueBuffer indexBuffer;
     std::vector<vk::UniqueBuffer> uniformBuffers;
     std::vector<vk::UniqueDeviceMemory> uniformBuffersMemory;
+    std::vector<vk::DescriptorSet> descriptorSets; // freed with descriptorPool
+    vk::UniqueDescriptorPool descriptorPool;
 };
 
 int main() {
